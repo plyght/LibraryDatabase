@@ -14,7 +14,7 @@ print("DEBUG [top-level]: main.py is loading...")
 
 db = Database()
 scanner = BarcodeScanner()
-notify = NotificationSystem()
+notify = NotificationSystem()  # global instance
 
 def check_admin_auth():
     return st.session_state.get('admin_authenticated', False)
@@ -74,8 +74,6 @@ def main():
 
 def show_home_checkout():
     st.header("book checkout")
-
-    # optional: user can clear user id from session
     if st.sidebar.button("change user id"):
         st.session_state.pop("current_user_id", None)
         st.sidebar.success("user id cleared.")
@@ -107,24 +105,22 @@ def show_home_checkout():
             new_email = st.text_input("your email")
             if st.button("create account"):
                 if new_name and new_email:
-                    # check duplicates
                     allu = db.get_all_users()
                     dup = allu[allu['email'].str.lower().str.strip() == new_email.lower().strip()]
                     if not dup.empty:
                         st.error("an account with that email already exists!")
-                        # do not reveal user id. just offer email button
                         if st.button("email me my user id"):
                             user_id = dup.iloc[0]['user_id']
                             subject = "Your Library User ID"
                             body = f"Hello,\n\nYour user id is: {user_id}\n\nRegards,\nLibrary"
-                            print(f"DEBUG [email_user_id]: attempting to send email of user id {user_id} to {new_email.strip()}")
+                            print(f"DEBUG [email_user_id]: sending user id {user_id} to {new_email.strip()}")
                             ok = notify.send_email(new_email.strip(), subject, body)
                             if ok:
-                                st.success(f"we've emailed your user id to {new_email.strip()}")
+                                st.success(f"emailed your user id to {new_email.strip()}")
                                 print("DEBUG [email_user_id]: success => email sent")
                             else:
                                 st.error("failed to send email. check logs or smtp config.")
-                                print("DEBUG [email_user_id]: failed to send email. see logs.")
+                                print("DEBUG [email_user_id]: fail => see logs.")
                     else:
                         new_id = db.add_user(new_name.strip(), new_email.strip())
                         st.session_state["current_user_id"] = new_id
@@ -144,14 +140,14 @@ def show_home_checkout():
                         user_id = match.iloc[0]['user_id']
                         subject = "Your Library User ID"
                         body = f"Hello,\n\nYour user id is: {user_id}\n\nRegards,\nLibrary"
-                        print(f"DEBUG [forgot_user_id]: emailing user id {user_id} to {forgot_email.strip()}")
+                        print(f"DEBUG [forgot_user_id]: sending user id {user_id} to {forgot_email.strip()}")
                         success = notify.send_email(forgot_email.strip(), subject, body)
                         if success:
                             st.success(f"emailed your user id to {forgot_email.strip()}")
                             print("DEBUG [forgot_user_id]: success => email sent")
                         else:
-                            st.error("failed to send email. check logs or smtp config.")
-                            print("DEBUG [forgot_user_id]: failed to send email. see logs.")
+                            st.error("failed to send email. see logs.")
+                            print("DEBUG [forgot_user_id]: fail => see logs.")
                 else:
                     st.error("please enter an email")
 
@@ -161,7 +157,6 @@ def show_home_checkout():
     else:
         st.info(f"you are currently user id => {st.session_state['current_user_id']}")
 
-    # normal checkout flow
     st.subheader("checkout a book")
 
     if st.button("scan barcode now"):
@@ -225,6 +220,7 @@ def show_admin():
 
     tab1, tab2, tab3, tab4 = st.tabs(["books", "users", "checkouts", "notifications"])
 
+    # -- books --
     with tab1:
         st.subheader("book management")
         if st.button("scan new book"):
@@ -259,6 +255,7 @@ def show_admin():
         st.write("full books in db (admin view):")
         st.dataframe(db.get_all_books())
 
+    # -- users --
     with tab2:
         st.subheader("user management")
         st.write(db.get_all_users())
@@ -283,14 +280,15 @@ def show_admin():
                                 st.success(f"we emailed the user id to {em.strip()}")
                                 print("DEBUG [admin_email_user_id]: success => email sent")
                             else:
-                                st.error("failed to send email. check logs or smtp config.")
-                                print("DEBUG [admin_email_user_id]: failed to send email. see logs.")
+                                st.error("failed to send email. see logs.")
+                                print("DEBUG [admin_email_user_id]: failed => see logs.")
                     else:
                         new_id = db.add_user(nm.strip(), em.strip())
                         st.success(f"user created => {new_id}")
                 else:
                     st.error("fill name & email")
 
+    # -- checkouts --
     with tab3:
         st.subheader("checkouts + checkins")
         st.write("recent events (checkin/checkout):")
@@ -307,7 +305,7 @@ def show_admin():
             if ok:
                 st.success("checked in successfully!")
             else:
-                st.error("check-in failed. maybe already returned or invalid copy id.")
+                st.error("check-in failed. maybe invalid copy id or already returned.")
 
             st.write("updated events:")
             st.dataframe(db.get_recent_events(10))
@@ -316,14 +314,28 @@ def show_admin():
             st.write("updated books:")
             st.dataframe(db.get_all_books())
 
+    # -- notifications & email settings --
     with tab4:
-        st.subheader("notifications")
+        st.subheader("notifications & email settings")
         st.write("send reminders for 3 days before due, due day, 3 days overdue.")
         if st.button("send reminder/overdue emails"):
             notify.check_reminders(db)
             st.success("reminders triggered. check console logs for details")
 
-        st.write("debug email test:")
+        st.write("---")
+        st.write("**set or update smtp credentials** (gmail account & password)**")
+        with st.form("smtp_creds"):
+            default_email = notify.sender_email or ""
+            default_pass = notify.sender_password or ""
+            new_email = st.text_input("library email account", value=default_email)
+            new_pass = st.text_input("library email password", type="password", value=default_pass)
+            sbc = st.form_submit_button("save email credentials")
+            if sbc:
+                print(f"DEBUG [smtp_creds]: admin typed email '{new_email}' pass len = {len(new_pass)}")
+                notify.update_credentials(new_email.strip(), new_pass.strip())
+                st.success("updated smtp credentials in memory. try sending test email below.")
+
+        st.write("---\n**debug email test**:")
         debug_email = st.text_input("email for test message")
         if st.button("send debug email"):
             if debug_email.strip():

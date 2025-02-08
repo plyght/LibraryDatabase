@@ -10,7 +10,6 @@ from utils.barcode_scanner import BarcodeScanner
 from utils.database import Database
 from utils.notifications import NotificationSystem
 
-# minimal console debug
 print("DEBUG [top-level]: main.py is loading...")
 
 db = Database()
@@ -21,7 +20,6 @@ def check_admin_auth():
     return st.session_state.get('admin_authenticated', False)
 
 def admin_login():
-    # no debug text in UI, minimal console logs
     print("DEBUG [admin_login]: start")
     st.header("admin login")
     with st.form("admin_login"):
@@ -77,47 +75,93 @@ def main():
 def show_home_checkout():
     st.header("book checkout")
 
-    # optional: button to clear user id
+    # optional: user can clear user id from session
     if st.sidebar.button("change user id"):
         st.session_state.pop("current_user_id", None)
-        st.sidebar.success("user id cleared. set a new one below.")
+        st.sidebar.success("user id cleared.")
         return
 
     if "current_user_id" not in st.session_state:
-        with st.expander("set or create your user id", expanded=True):
-            with st.form("create_or_select_user"):
-                st.write("already have a user id? enter it. otherwise create a new user.")
-                existing_id = st.text_input("existing user id (if you have it)")
-                new_name = st.text_input("new user name (if you want a new one)")
-                new_email = st.text_input("new user email (if you want a new one)")
-                sub = st.form_submit_button("confirm user")
-                if sub:
-                    if existing_id.strip():
-                        # check if that user id exists
-                        users_df = db.get_all_users()
-                        match = users_df[users_df['user_id'].astype(str).str.strip() == existing_id.strip()]
-                        if match.empty:
-                            st.error("that user id doesn't exist. try again or create new.")
-                        else:
-                            st.session_state["current_user_id"] = existing_id.strip()
-                            st.success(f"welcome back user {existing_id}!")
+        st.subheader("login / create account")
+        action = st.radio(
+            "select an action",
+            ["sign in with user id", "create new account", "forgot user id?"]
+        )
+
+        if action == "sign in with user id":
+            typed_id = st.text_input("existing user id")
+            if st.button("sign in"):
+                if typed_id.strip():
+                    users_df = db.get_all_users()
+                    match = users_df[users_df['user_id'].astype(str).str.strip() == typed_id.strip()]
+                    if match.empty:
+                        st.error("that user id doesn't exist. check or create new.")
                     else:
-                        # create new
-                        if new_name and new_email:
-                            new_id = db.add_user(new_name.strip(), new_email.strip())
-                            st.session_state["current_user_id"] = new_id
-                            st.success(f"new user created => {new_id}")
+                        st.session_state["current_user_id"] = typed_id.strip()
+                        st.success(f"welcome back, user {typed_id}!")
+                else:
+                    st.error("please type a user id")
+
+        elif action == "create new account":
+            new_name = st.text_input("your name")
+            new_email = st.text_input("your email")
+            if st.button("create account"):
+                if new_name and new_email:
+                    # check duplicates
+                    allu = db.get_all_users()
+                    dup = allu[allu['email'].str.lower().str.strip() == new_email.lower().strip()]
+                    if not dup.empty:
+                        st.error("an account with that email already exists!")
+                        # do not reveal user id. just offer email button
+                        if st.button("email me my user id"):
+                            user_id = dup.iloc[0]['user_id']
+                            subject = "Your Library User ID"
+                            body = f"Hello,\n\nYour user id is: {user_id}\n\nRegards,\nLibrary"
+                            print(f"DEBUG [email_user_id]: attempting to send email of user id {user_id} to {new_email.strip()}")
+                            ok = notify.send_email(new_email.strip(), subject, body)
+                            if ok:
+                                st.success(f"we've emailed your user id to {new_email.strip()}")
+                                print("DEBUG [email_user_id]: success => email sent")
+                            else:
+                                st.error("failed to send email. check logs or smtp config.")
+                                print("DEBUG [email_user_id]: failed to send email. see logs.")
+                    else:
+                        new_id = db.add_user(new_name.strip(), new_email.strip())
+                        st.session_state["current_user_id"] = new_id
+                        st.success(f"new account created => user id: {new_id}")
+                else:
+                    st.error("please enter name & email")
+
+        else:  # forgot user id
+            forgot_email = st.text_input("enter your email to retrieve user id")
+            if st.button("send user id to my email"):
+                if forgot_email.strip():
+                    users_df = db.get_all_users()
+                    match = users_df[users_df['email'].str.lower().str.strip() == forgot_email.lower().strip()]
+                    if match.empty:
+                        st.error("no user found with that email.")
+                    else:
+                        user_id = match.iloc[0]['user_id']
+                        subject = "Your Library User ID"
+                        body = f"Hello,\n\nYour user id is: {user_id}\n\nRegards,\nLibrary"
+                        print(f"DEBUG [forgot_user_id]: emailing user id {user_id} to {forgot_email.strip()}")
+                        success = notify.send_email(forgot_email.strip(), subject, body)
+                        if success:
+                            st.success(f"emailed your user id to {forgot_email.strip()}")
+                            print("DEBUG [forgot_user_id]: success => email sent")
                         else:
-                            st.error("enter existing id or fill out name+email to create a user")
+                            st.error("failed to send email. check logs or smtp config.")
+                            print("DEBUG [forgot_user_id]: failed to send email. see logs.")
+                else:
+                    st.error("please enter an email")
 
         if "current_user_id" not in st.session_state:
-            # if still no user
-            st.warning("no user id set yet. please set it above to continue.")
+            st.warning("you must be signed in to proceed with checkout.")
             return
     else:
-        st.info(f"you are currently user id: {st.session_state['current_user_id']}")
+        st.info(f"you are currently user id => {st.session_state['current_user_id']}")
 
-    # once user id is set, let them checkout a book
+    # normal checkout flow
     st.subheader("checkout a book")
 
     if st.button("scan barcode now"):
@@ -126,13 +170,13 @@ def show_home_checkout():
             st.session_state["checkout_barcode"] = scanned
             st.success(f"scanned => {scanned}")
 
-    typed_barcode = st.text_input("book barcode (isbn)", value=st.session_state.get("checkout_barcode", ""))
+    typed_barcode = st.text_input("book barcode (isbn)", value=st.session_state.get("checkout_barcode",""))
     if st.button("fetch open library data"):
         t,a = fetch_book_info_from_isbn(typed_barcode)
         if t or a:
             st.write(f"**title**: {t}, **author**: {a}")
         else:
-            st.warning("not found in open library. possibly no data")
+            st.warning("not found in open library or invalid isbn")
 
     if st.button("checkout book"):
         user_id = st.session_state["current_user_id"]
@@ -158,7 +202,6 @@ def show_home_checkout():
         )
         st.success(f"checked out '{book['title']}' by {book['author']} — due {due_date.strftime('%Y-%m-%d')}")
 
-    # show simplified table
     st.write("books in db (simplified):")
     all_books = db.get_all_books()
     if all_books.empty:
@@ -225,8 +268,26 @@ def show_admin():
             sb = st.form_submit_button("create user")
             if sb:
                 if nm and em:
-                    new_id = db.add_user(nm.strip(), em.strip())
-                    st.success(f"user created => {new_id}")
+                    allu = db.get_all_users()
+                    existing = allu[allu['email'].str.lower().str.strip() == em.lower().strip()]
+                    if not existing.empty:
+                        ex_uid = existing.iloc[0]['user_id']
+                        st.warning(f"that email is already in use. user id => {ex_uid}")
+                        st.info("if you want, you can send them an email with their user id:")
+                        if st.button("email them their user id", key="email_existing_user"):
+                            subject = "Your Library User ID"
+                            body = f"Hello,\n\nYour user id is: {ex_uid}\n\nRegards,\nLibrary"
+                            print(f"DEBUG [admin_email_user_id]: about to email user id {ex_uid} to {em.strip()}")
+                            ok = notify.send_email(em.strip(), subject, body)
+                            if ok:
+                                st.success(f"we emailed the user id to {em.strip()}")
+                                print("DEBUG [admin_email_user_id]: success => email sent")
+                            else:
+                                st.error("failed to send email. check logs or smtp config.")
+                                print("DEBUG [admin_email_user_id]: failed to send email. see logs.")
+                    else:
+                        new_id = db.add_user(nm.strip(), em.strip())
+                        st.success(f"user created => {new_id}")
                 else:
                     st.error("fill name & email")
 
@@ -248,7 +309,6 @@ def show_admin():
             else:
                 st.error("check-in failed. maybe already returned or invalid copy id.")
 
-            # refresh
             st.write("updated events:")
             st.dataframe(db.get_recent_events(10))
             st.write("updated checkouts:")
@@ -267,14 +327,16 @@ def show_admin():
         debug_email = st.text_input("email for test message")
         if st.button("send debug email"):
             if debug_email.strip():
+                print(f"DEBUG [admin debug email]: about to call send_debug_email for {debug_email.strip()}")
                 ok = notify.send_debug_email(debug_email.strip())
                 if ok:
                     st.success("debug email sent!")
+                    print("DEBUG [admin debug email]: success => email was sent (returned True)")
                 else:
-                    st.error("failed to send debug email. check console logs.")
+                    st.error("failed to send debug email. see console logs.")
+                    print("DEBUG [admin debug email]: returned False => check logs")
             else:
                 st.error("please enter a valid email address")
-
 
 if __name__ == "__main__":
     print("DEBUG [__main__]: about to call main()")
